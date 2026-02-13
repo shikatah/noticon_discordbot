@@ -138,6 +138,19 @@ class FirestoreService:
             return
         await asyncio.to_thread(self._update_member_outreach_sync, member_id, payload)
 
+    async def update_member_intervention_preference(
+        self,
+        member_id: str,
+        preferences: dict[str, object],
+    ) -> None:
+        if not self.enabled or self._client is None:
+            return
+        await asyncio.to_thread(
+            self._update_member_intervention_preference_sync,
+            member_id,
+            preferences,
+        )
+
     def _collection(self, name: str):
         assert self._client is not None
         return self._client.collection("community_bot").document("data").collection(name)
@@ -292,3 +305,17 @@ class FirestoreService:
             "updated_at": datetime.now(timezone.utc),
         }
         doc_ref.set(update_payload, merge=True)
+
+    def _update_member_intervention_preference_sync(
+        self,
+        member_id: str,
+        preferences: dict[str, object],
+    ) -> None:
+        doc_ref = self._collection("members").document(member_id)
+        doc_ref.set(
+            {
+                "intervention_preferences": preferences,
+                "updated_at": datetime.now(timezone.utc),
+            },
+            merge=True,
+        )

@@ -30,6 +30,8 @@ class SecondaryDecision:
     mention_users: list[str]
     reaction_emoji: str | None
     confidence: float
+    silence_confidence: float
+    quality_score: float
     reasoning: str
     model: str
     judged_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -43,6 +45,8 @@ class SecondaryDecision:
             "mention_users": self.mention_users,
             "reaction_emoji": self.reaction_emoji,
             "confidence": self.confidence,
+            "silence_confidence": self.silence_confidence,
+            "quality_score": self.quality_score,
             "reasoning": self.reasoning,
             "model": self.model,
             "judged_at": self.judged_at,

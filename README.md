@@ -32,6 +32,12 @@ Discord community bot for the Notion learning community "Nochicon".
 - Weekly inactive outreach dry-run (`services/outreach.py`, `services/scheduler.py`)
 - Admin commands: `/bot-pause` and `/bot-resume`
 - Firestore paths unified under `community_bot/data/...`
+- Secondary judge quality improvements:
+  - channel-specific guidance
+  - `silence_confidence` and `quality_score`
+  - quality self-check + one-time regeneration
+  - anti-pattern detection and intervention cooldown
+  - user-level intervention preference learning
 
 ## Setup
 1. Install Python 3.11.

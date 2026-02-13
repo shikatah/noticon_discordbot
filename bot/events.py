@@ -139,6 +139,7 @@ def _append_recent_bot_action(
     intervention_type: str,
     channel_id: str,
     target_message_id: str,
+    target_user_id: str | None,
     timestamp: datetime,
 ) -> None:
     recent_actions = bot.runtime.setdefault("bot_recent_actions", [])
@@ -147,6 +148,7 @@ def _append_recent_bot_action(
             "intervention_type": intervention_type,
             "channel_id": channel_id,
             "target_message_id": target_message_id,
+            "target_user_id": target_user_id,
             "timestamp": timestamp.isoformat(),
         }
     )
@@ -160,6 +162,164 @@ def _can_intervene(bot: discord.Client, in_quiet_hours: bool) -> tuple[bool, str
     if int(bot.runtime.get("interventions_today", 0)) >= bot.settings.bot_daily_intervention_limit:
         return False, "daily_limit_reached"
     return True, "ok"
+
+
+def _estimate_emotional_tone(channel_history: list[dict[str, object]]) -> str:
+    text = "\n".join(str(item.get("content", "")) for item in channel_history[-10:])
+    lowered = text.lower()
+    positive_terms = ["ありがとう", "助か", "最高", "嬉しい", "よかった", "great", "awesome"]
+    negative_terms = ["困", "むず", "難しい", "つら", "しんど", "bad", "error", "詰ま"]
+    positive_score = sum(1 for t in positive_terms if t in lowered)
+    negative_score = sum(1 for t in negative_terms if t in lowered)
+    if negative_score >= positive_score + 2:
+        return "stuck_or_negative"
+    if positive_score >= negative_score + 2:
+        return "positive"
+    return "neutral"
+
+
+def _count_recent_bot_interventions_for_user(
+    bot: discord.Client,
+    user_id: str,
+    now: datetime,
+    within_hours: int = 24,
+) -> int:
+    count = 0
+    cutoff = now - timedelta(hours=within_hours)
+    for item in bot.runtime.get("bot_recent_actions", []):
+        if str(item.get("target_user_id", "")) != user_id:
+            continue
+        ts_text = item.get("timestamp")
+        if not isinstance(ts_text, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_text)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts >= cutoff:
+            count += 1
+    return count
+
+
+def _collect_preferred_types(bot: discord.Client, user_id: str) -> list[str]:
+    scores = bot.runtime.get("user_intervention_scores", {}).get(user_id, {})
+    if not isinstance(scores, dict):
+        return []
+    ranked = sorted(scores.items(), key=lambda kv: float(kv[1]), reverse=True)
+    return [str(key) for key, _ in ranked[:3]]
+
+
+def _is_same_type_on_cooldown(
+    bot: discord.Client,
+    user_id: str,
+    intervention_type: str,
+    now: datetime,
+) -> bool:
+    if intervention_type in {"silent", "react_only"}:
+        return False
+    cooldowns = bot.runtime.get("user_type_cooldowns", {})
+    key = f"{user_id}:{intervention_type}"
+    ts_text = cooldowns.get(key)
+    if not isinstance(ts_text, str):
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_text)
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return now - ts < timedelta(hours=8)
+
+
+def _set_type_cooldown(
+    bot: discord.Client,
+    user_id: str,
+    intervention_type: str,
+    now: datetime,
+) -> None:
+    if intervention_type in {"silent", "react_only"}:
+        return
+    key = f"{user_id}:{intervention_type}"
+    bot.runtime.setdefault("user_type_cooldowns", {})[key] = now.isoformat()
+
+
+def _register_pending_intervention_feedback(
+    bot: discord.Client,
+    user_id: str,
+    intervention_type: str,
+    now: datetime,
+) -> None:
+    pending = bot.runtime.setdefault("pending_user_interventions", {})
+    entries = pending.setdefault(user_id, [])
+    entries.append(
+        {
+            "intervention_type": intervention_type,
+            "timestamp": now.isoformat(),
+        }
+    )
+    if len(entries) > 10:
+        del entries[:-10]
+
+
+async def _apply_feedback_on_new_user_message(
+    bot: discord.Client,
+    user_id: str,
+    now: datetime,
+) -> None:
+    pending = bot.runtime.setdefault("pending_user_interventions", {})
+    entries = pending.get(user_id, [])
+    if not isinstance(entries, list) or not entries:
+        return
+    scores_map = bot.runtime.setdefault("user_intervention_scores", {})
+    user_scores = scores_map.setdefault(user_id, {})
+    keep_entries: list[dict[str, object]] = []
+
+    for entry in entries:
+        ts_text = entry.get("timestamp")
+        intervention_type = str(entry.get("intervention_type", ""))
+        if not ts_text or not intervention_type:
+            continue
+        try:
+            ts = datetime.fromisoformat(str(ts_text))
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+
+        # If user speaks within 12h after intervention, count as weak positive.
+        delta = now - ts
+        if timedelta(minutes=1) <= delta <= timedelta(hours=12):
+            old_score = float(user_scores.get(intervention_type, 0.0))
+            user_scores[intervention_type] = round(old_score + 0.2, 4)
+        elif delta <= timedelta(hours=24):
+            keep_entries.append(
+                {
+                    "intervention_type": intervention_type,
+                    "timestamp": ts.isoformat(),
+                }
+            )
+
+    pending[user_id] = keep_entries
+    if user_scores:
+        await bot.firestore.update_member_intervention_preference(
+            member_id=user_id,
+            preferences=user_scores,
+        )
+
+
+def _estimated_hours_since_last_post(author_stats: dict[str, object], now: datetime) -> float:
+    last_text = author_stats.get("last_active_at")
+    if not isinstance(last_text, str):
+        return 999.0
+    try:
+        last_dt = datetime.fromisoformat(last_text)
+    except ValueError:
+        return 999.0
+    if last_dt.tzinfo is None:
+        last_dt = last_dt.replace(tzinfo=timezone.utc)
+    return round((now - last_dt).total_seconds() / 3600.0, 3)
 
 
 async def _execute_secondary_action(
@@ -216,6 +376,7 @@ def register_event_handlers(bot: discord.Client) -> None:
 
         now = datetime.now(timezone.utc)
         _maybe_reset_daily_counters(bot, now)
+        await _apply_feedback_on_new_user_message(bot, str(message.author.id), now)
 
         bot.runtime["messages_seen"] = int(bot.runtime["messages_seen"]) + 1
         bot.runtime["last_message_at"] = now
@@ -306,11 +467,28 @@ def register_event_handlers(bot: discord.Client) -> None:
                 author_profile = _make_author_profile(message, author_stats)
                 author_profile["interests"] = profile_payload.get("interests", {})
                 author_profile["context"] = profile_payload.get("context", {})
+                emotional_tone = _estimate_emotional_tone(channel_context)
+                recent_bot_interventions_for_author = _count_recent_bot_interventions_for_user(
+                    bot=bot,
+                    user_id=str(message.author.id),
+                    now=now,
+                )
+                preferred_types = _collect_preferred_types(bot, str(message.author.id))
                 secondary_input = {
                     "message_content": message.content,
                     "channel_context": channel_context,
                     "channel_type": channel_type,
                     "author_profile": author_profile,
+                    "conversation_signals": {
+                        "emotional_tone": emotional_tone,
+                        "recent_bot_interventions_for_author": recent_bot_interventions_for_author,
+                        "hours_since_author_last_post": _estimated_hours_since_last_post(
+                            author_stats,
+                            now,
+                        ),
+                        "estimated_unreplied_hours": 0.0,
+                        "preferred_intervention_types": preferred_types,
+                    },
                     "time_context": {
                         "now": now.astimezone().isoformat(),
                         "weekday": now.astimezone().strftime("%A"),
@@ -319,6 +497,20 @@ def register_event_handlers(bot: discord.Client) -> None:
                     "bot_recent_actions": bot.runtime.get("bot_recent_actions", []),
                 }
                 secondary_result = await bot.secondary_judge.judge(secondary_input)
+
+                if _is_same_type_on_cooldown(
+                    bot=bot,
+                    user_id=str(message.author.id),
+                    intervention_type=secondary_result.intervention_type,
+                    now=now,
+                ):
+                    secondary_result.intervention_type = "silent"
+                    secondary_result.content = ""
+                    secondary_result.reasoning += " / same_type_cooldown"
+                    secondary_result.silence_confidence = max(
+                        secondary_result.silence_confidence,
+                        0.85,
+                    )
 
                 try:
                     action_outcome, action_ref = await _execute_secondary_action(
@@ -339,7 +531,20 @@ def register_event_handlers(bot: discord.Client) -> None:
                             intervention_type=secondary_result.intervention_type,
                             channel_id=channel_id,
                             target_message_id=record.message_id,
+                            target_user_id=str(message.author.id),
                             timestamp=now,
+                        )
+                        _set_type_cooldown(
+                            bot=bot,
+                            user_id=str(message.author.id),
+                            intervention_type=secondary_result.intervention_type,
+                            now=now,
+                        )
+                        _register_pending_intervention_feedback(
+                            bot=bot,
+                            user_id=str(message.author.id),
+                            intervention_type=secondary_result.intervention_type,
+                            now=now,
                         )
                         await bot.firestore.update_message_bot_action(
                             message_id=record.message_id,
@@ -360,6 +565,8 @@ def register_event_handlers(bot: discord.Client) -> None:
                     "mention_users": [],
                     "reaction_emoji": None,
                     "confidence": 0.0,
+                    "silence_confidence": 1.0,
+                    "quality_score": 0.0,
                     "reasoning": f"skipped:{skip_reason}",
                     "model": "skip-rule",
                 }
@@ -371,10 +578,13 @@ def register_event_handlers(bot: discord.Client) -> None:
                 payload={
                     "type": secondary_payload.get("intervention_type"),
                     "channel_id": channel_id,
+                    "target_user_id": str(message.author.id),
                     "target_message_id": record.message_id,
                     "content": secondary_payload.get("content", ""),
                     "reasoning": action_reason,
                     "confidence": secondary_payload.get("confidence", 0.0),
+                    "silence_confidence": secondary_payload.get("silence_confidence", 0.0),
+                    "quality_score": secondary_payload.get("quality_score", 0.0),
                     "timestamp": now,
                     "model": secondary_payload.get("model"),
                     "primary_decision": decision.to_dict(),

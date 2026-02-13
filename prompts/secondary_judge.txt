@@ -64,9 +64,17 @@
 {
   "intervention_type": "empathy|encouragement|celebration|dig_deeper|reframe|clarify|abstract|compare|supplement|correct|relate|bridge|topic_shift|call_out|open_question|choice|experience|react_only|silent",
   "tone": "casual|helpful|warm|formal",
-  "content": "実際の投稿内容（日本語）",
+  "content": "実際の投稿内容（日本語、120文字程度、質問は最大1つ）",
   "mention_users": ["user_id（橋渡し時）"],
   "reaction_emoji": "絵文字（react_onlyの場合）",
   "confidence": 0.0-1.0,
+  "silence_confidence": 0.0-1.0,
+  "quality_score": 0.0-1.0,
   "reasoning": "なぜこの介入タイプを選んだかの理由"
 }
+
+## 品質ルール
+- まず相手の文脈を1点だけ短く引用してから反応する
+- 長文にしない
+- 上から目線・命令口調を避ける
+- 迷うならsilentを選ぶ
