@@ -21,6 +21,11 @@ Discord community bot for the Notion learning community "Nochicon".
 - Execute actions: `reply` / `react_only` / `silent`
 - Save bot action logs (`community_bot/bot_actions/items/{action_id}`)
 
+## Phase 4 (minimum implemented)
+- Member profile service (`services/member_profile.py`)
+- Realtime profile updates on every message
+- Firestore member profile save (`community_bot/members/items/{user_id}`)
+
 ## Setup
 1. Install Python 3.11.
 2. Create virtual environment and install dependencies:

@@ -8,6 +8,7 @@ from bot.commands import register_commands
 from bot.events import register_event_handlers
 from config.settings import Settings
 from services.firestore import FirestoreService
+from services.member_profile import MemberProfileService
 from services.primary_judge import PrimaryJudgeService
 from services.secondary_judge import SecondaryJudgeService
 
@@ -19,6 +20,7 @@ class CommunityBot(commands.Bot):
         firestore: FirestoreService,
         primary_judge: PrimaryJudgeService,
         secondary_judge: SecondaryJudgeService,
+        member_profile: MemberProfileService,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -29,12 +31,14 @@ class CommunityBot(commands.Bot):
         self.firestore = firestore
         self.primary_judge = primary_judge
         self.secondary_judge = secondary_judge
+        self.member_profile = member_profile
         self.runtime: dict[str, Any] = {
             "started_at": datetime.now(timezone.utc),
             "day_key": datetime.now(timezone.utc).date().isoformat(),
             "messages_seen": 0,
             "interventions_today": 0,
             "primary_needs_intervention_count": 0,
+            "member_profiles_updated": 0,
             "last_message_at": None,
             "last_action_at": None,
             "channel_activity": {},

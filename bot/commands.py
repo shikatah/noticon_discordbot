@@ -35,6 +35,7 @@ def register_commands(bot: discord.Client) -> None:
                 "- Primary flagged: "
                 f"{bot.runtime.get('primary_needs_intervention_count', 0)}"
             ),
+            f"- Member profiles updated: {bot.runtime.get('member_profiles_updated', 0)}",
             f"- Interventions today: {bot.runtime.get('interventions_today', 0)}",
             f"- Last message at: {_format_timestamp(bot.runtime.get('last_message_at'))}",
             f"- Last action at: {_format_timestamp(bot.runtime.get('last_action_at'))}",

@@ -234,6 +234,22 @@ def register_event_handlers(bot: discord.Client) -> None:
             content=message.content,
             created_at=record.timestamp,
         )
+        channel_history = bot.runtime.get("channel_history", {}).get(channel_id, [])
+        recent_posts = [
+            str(item.get("content", ""))
+            for item in channel_history
+            if item.get("author")
+            == getattr(message.author, "display_name", message.author.name)
+        ][-10:]
+
+        profile_payload = bot.member_profile.build_realtime_profile(
+            message=message,
+            stats=author_stats,
+            recent_posts=recent_posts,
+            now=now,
+        )
+        await bot.firestore.save_member_profile(str(message.author.id), profile_payload)
+        bot.runtime["member_profiles_updated"] = int(bot.runtime["member_profiles_updated"]) + 1
 
         recent_activity = _recent_channel_activity_count(bot, channel_id, now)
         in_quiet_hours = _is_quiet_hours(
@@ -268,8 +284,10 @@ def register_event_handlers(bot: discord.Client) -> None:
             action_reason = skip_reason
 
             if can_intervene:
-                channel_context = bot.runtime.get("channel_history", {}).get(channel_id, [])
+                channel_context = channel_history
                 author_profile = _make_author_profile(message, author_stats)
+                author_profile["interests"] = profile_payload.get("interests", {})
+                author_profile["context"] = profile_payload.get("context", {})
                 secondary_input = {
                     "message_content": message.content,
                     "channel_context": channel_context,

@@ -58,6 +58,11 @@ class FirestoreService:
             return
         await asyncio.to_thread(self._save_bot_action_sync, action_id, payload)
 
+    async def save_member_profile(self, member_id: str, payload: dict[str, object]) -> None:
+        if not self.enabled or self._client is None:
+            return
+        await asyncio.to_thread(self._save_member_profile_sync, member_id, payload)
+
     async def update_message_bot_action(
         self,
         message_id: str,
@@ -135,3 +140,13 @@ class FirestoreService:
             },
             merge=True,
         )
+
+    def _save_member_profile_sync(self, member_id: str, payload: dict[str, object]) -> None:
+        assert self._client is not None
+        doc_ref = (
+            self._client.collection("community_bot")
+            .document("members")
+            .collection("items")
+            .document(member_id)
+        )
+        doc_ref.set(payload, merge=True)
