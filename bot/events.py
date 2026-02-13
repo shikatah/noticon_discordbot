@@ -188,6 +188,20 @@ async def _execute_secondary_action(
     return intervention_type, str(sent.id)
 
 
+async def _resolve_text_channel(bot: discord.Client, channel_id: int) -> discord.TextChannel | None:
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            logger.exception("Failed to resolve text channel: %s", channel_id)
+            return None
+    if isinstance(channel, discord.TextChannel):
+        return channel
+    logger.warning("Configured channel is not a text channel: %s", channel_id)
+    return None
+
+
 def register_event_handlers(bot: discord.Client) -> None:
     @bot.event
     async def on_ready() -> None:
@@ -250,6 +264,10 @@ def register_event_handlers(bot: discord.Client) -> None:
         )
         await bot.firestore.save_member_profile(str(message.author.id), profile_payload)
         bot.runtime["member_profiles_updated"] = int(bot.runtime["member_profiles_updated"]) + 1
+
+        if not bot.runtime.get("bot_enabled", True):
+            logger.info("Bot is paused. Skipping active intervention pipeline.")
+            return
 
         recent_activity = _recent_channel_activity_count(bot, channel_id, now)
         in_quiet_hours = _is_quiet_hours(
@@ -390,3 +408,111 @@ def register_event_handlers(bot: discord.Client) -> None:
     @bot.event
     async def on_member_join(member: discord.Member) -> None:
         logger.info("Member joined: %s (%s)", member.display_name, member.id)
+        now = datetime.now(timezone.utc)
+
+        if not bot.runtime.get("bot_enabled", True):
+            await bot.firestore.save_bot_action(
+                action_id=f"welcome-skipped-{uuid4().hex[:8]}",
+                payload={
+                    "type": "welcome",
+                    "channel_id": "",
+                    "target_message_id": None,
+                    "content": "",
+                    "reasoning": "bot_paused",
+                    "confidence": 0.0,
+                    "timestamp": now,
+                    "model": "skip-rule",
+                    "outcome": {
+                        "status": "skipped",
+                        "action_ref": str(member.id),
+                    },
+                },
+            )
+            return
+
+        welcome_channel_id = bot.settings.welcome_channel_id
+        if welcome_channel_id is None:
+            await bot.firestore.save_bot_action(
+                action_id=f"welcome-skipped-{uuid4().hex[:8]}",
+                payload={
+                    "type": "welcome",
+                    "channel_id": "",
+                    "target_message_id": None,
+                    "content": "",
+                    "reasoning": "welcome_channel_not_configured",
+                    "confidence": 0.0,
+                    "timestamp": now,
+                    "model": "skip-rule",
+                    "outcome": {
+                        "status": "skipped",
+                        "action_ref": str(member.id),
+                    },
+                },
+            )
+            return
+
+        channel = await _resolve_text_channel(bot, welcome_channel_id)
+        if channel is None:
+            await bot.firestore.save_bot_action(
+                action_id=f"welcome-failed-{uuid4().hex[:8]}",
+                payload={
+                    "type": "welcome",
+                    "channel_id": str(welcome_channel_id),
+                    "target_message_id": None,
+                    "content": "",
+                    "reasoning": "welcome_channel_resolve_failed",
+                    "confidence": 0.0,
+                    "timestamp": now,
+                    "model": "system",
+                    "outcome": {
+                        "status": "failed",
+                        "action_ref": str(member.id),
+                    },
+                },
+            )
+            return
+
+        try:
+            welcome_text = await bot.welcome.generate_message(
+                member_name=member.display_name,
+                now_utc=now,
+            )
+            send_text = f"{member.mention}\n{welcome_text}"
+            sent = await channel.send(send_text)
+            await bot.firestore.save_bot_action(
+                action_id=f"welcome-{uuid4().hex[:8]}",
+                payload={
+                    "type": "welcome",
+                    "channel_id": str(welcome_channel_id),
+                    "target_message_id": str(sent.id),
+                    "content": send_text,
+                    "reasoning": "member_joined",
+                    "confidence": 1.0,
+                    "timestamp": now,
+                    "model": "welcome-service",
+                    "outcome": {
+                        "status": "posted",
+                        "action_ref": str(sent.id),
+                    },
+                },
+            )
+            bot.runtime["last_action_at"] = now
+        except Exception:
+            logger.exception("Failed to post welcome message.")
+            await bot.firestore.save_bot_action(
+                action_id=f"welcome-failed-{uuid4().hex[:8]}",
+                payload={
+                    "type": "welcome",
+                    "channel_id": str(welcome_channel_id),
+                    "target_message_id": None,
+                    "content": "",
+                    "reasoning": "welcome_send_failed",
+                    "confidence": 0.0,
+                    "timestamp": now,
+                    "model": "welcome-service",
+                    "outcome": {
+                        "status": "failed",
+                        "action_ref": str(member.id),
+                    },
+                },
+            )

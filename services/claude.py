@@ -57,3 +57,31 @@ class ClaudeClient:
             if isinstance(text, str):
                 parts.append(text)
         return "\n".join(parts).strip()
+
+    async def generate_text(
+        self,
+        system_prompt: str,
+        payload: dict[str, object],
+        max_tokens: int = 300,
+    ) -> str:
+        if not self.enabled or self._client is None:
+            raise RuntimeError("Claude is disabled.")
+
+        user_text = (
+            "次の情報を元に回答を作成してください。\n\n"
+            f"{json.dumps(payload, ensure_ascii=False)}"
+        )
+        response = await asyncio.to_thread(
+            self._client.messages.create,
+            model=self.model_name,
+            max_tokens=max_tokens,
+            temperature=0.5,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_text}],
+        )
+        parts: list[str] = []
+        for block in response.content:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return "\n".join(parts).strip()
