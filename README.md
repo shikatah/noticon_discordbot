@@ -14,6 +14,13 @@ Discord community bot for the Notion learning community "Nochicon".
 - Decision logging to Firestore (`community_bot/decision_logs/items/{message_id}`)
 - Automatic primary judgment on every non-bot message
 
+## Phase 3 (minimum implemented)
+- Claude secondary judge client (`services/claude.py`)
+- Secondary decision service (`services/secondary_judge.py`)
+- Trigger secondary judge only when primary judge says intervention needed
+- Execute actions: `reply` / `react_only` / `silent`
+- Save bot action logs (`community_bot/bot_actions/items/{action_id}`)
+
 ## Setup
 1. Install Python 3.11.
 2. Create virtual environment and install dependencies:
@@ -34,4 +41,5 @@ Discord community bot for the Notion learning community "Nochicon".
 ## Notes
 - If `GOOGLE_CLOUD_PROJECT` or Google credentials are missing, Firestore is disabled automatically.
 - If `GEMINI_API_KEY` is missing, primary judgment runs with safe fallback rules.
+- If `ANTHROPIC_API_KEY` is missing, secondary judgment falls back to `silent`.
 - Set `DISCORD_GUILD_ID` during development so slash commands sync quickly.

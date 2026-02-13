@@ -53,6 +53,26 @@ class FirestoreService:
             decision,
         )
 
+    async def save_bot_action(self, action_id: str, payload: dict[str, object]) -> None:
+        if not self.enabled or self._client is None:
+            return
+        await asyncio.to_thread(self._save_bot_action_sync, action_id, payload)
+
+    async def update_message_bot_action(
+        self,
+        message_id: str,
+        action_type: str,
+        action_at: object,
+    ) -> None:
+        if not self.enabled or self._client is None:
+            return
+        await asyncio.to_thread(
+            self._update_message_bot_action_sync,
+            message_id,
+            action_type,
+            action_at,
+        )
+
     def _save_message_sync(self, record: MessageRecord) -> None:
         assert self._client is not None
         doc_ref = (
@@ -81,6 +101,37 @@ class FirestoreService:
                 "message_id": message_id,
                 "input": input_payload,
                 "decision": decision.to_dict(),
+            },
+            merge=True,
+        )
+
+    def _save_bot_action_sync(self, action_id: str, payload: dict[str, object]) -> None:
+        assert self._client is not None
+        doc_ref = (
+            self._client.collection("community_bot")
+            .document("bot_actions")
+            .collection("items")
+            .document(action_id)
+        )
+        doc_ref.set(payload, merge=True)
+
+    def _update_message_bot_action_sync(
+        self,
+        message_id: str,
+        action_type: str,
+        action_at: object,
+    ) -> None:
+        assert self._client is not None
+        doc_ref = (
+            self._client.collection("community_bot")
+            .document("messages")
+            .collection("items")
+            .document(message_id)
+        )
+        doc_ref.set(
+            {
+                "bot_action": action_type,
+                "bot_action_at": action_at,
             },
             merge=True,
         )

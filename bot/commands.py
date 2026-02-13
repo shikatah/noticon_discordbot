@@ -21,11 +21,15 @@ def register_commands(bot: discord.Client) -> None:
 
         firestore_state = "enabled" if bot.firestore.enabled else "disabled"
         primary_judge_state = "enabled" if bot.primary_judge.gemini.enabled else "fallback"
+        secondary_judge_state = (
+            "enabled" if bot.secondary_judge.claude.enabled else "fallback"
+        )
 
         lines = [
             "Bot status",
             f"- Firestore: {firestore_state}",
             f"- Primary judge (Gemini): {primary_judge_state}",
+            f"- Secondary judge (Claude): {secondary_judge_state}",
             f"- Messages seen: {bot.runtime.get('messages_seen', 0)}",
             (
                 "- Primary flagged: "
