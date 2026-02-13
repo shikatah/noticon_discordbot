@@ -8,10 +8,16 @@ from bot.commands import register_commands
 from bot.events import register_event_handlers
 from config.settings import Settings
 from services.firestore import FirestoreService
+from services.primary_judge import PrimaryJudgeService
 
 
 class CommunityBot(commands.Bot):
-    def __init__(self, settings: Settings, firestore: FirestoreService) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        firestore: FirestoreService,
+        primary_judge: PrimaryJudgeService,
+    ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
@@ -19,12 +25,15 @@ class CommunityBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
         self.settings = settings
         self.firestore = firestore
+        self.primary_judge = primary_judge
         self.runtime: dict[str, Any] = {
             "started_at": datetime.now(timezone.utc),
             "messages_seen": 0,
             "interventions_today": 0,
+            "primary_needs_intervention_count": 0,
             "last_message_at": None,
             "last_action_at": None,
+            "channel_activity": {},
         }
 
     async def setup_hook(self) -> None:
