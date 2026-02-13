@@ -1,0 +1,3 @@
+Generate one topic post for a Notion learning community.
+Keep it short, friendly, and easy to answer.
+Avoid repeating recent post format or topic.
