@@ -44,6 +44,9 @@ class Settings:
     topic_weekdays: str
     topic_hour: int
     topic_minute: int
+    atmosphere_check_start_hour: int
+    atmosphere_check_end_hour: int
+    atmosphere_check_interval_hours: int
     inactive_threshold_days: int
     inactive_check_weekday: str
     inactive_check_hour: int
@@ -76,6 +79,11 @@ def get_settings() -> Settings:
         topic_weekdays=os.getenv("TOPIC_WEEKDAYS", "MON,TUE,WED,THU,FRI"),
         topic_hour=_parse_int("TOPIC_HOUR", 9) or 9,
         topic_minute=_parse_int("TOPIC_MINUTE", 0) or 0,
+        atmosphere_check_start_hour=_parse_int("ATMOSPHERE_CHECK_START_HOUR", 9) or 9,
+        atmosphere_check_end_hour=_parse_int("ATMOSPHERE_CHECK_END_HOUR", 17) or 17,
+        atmosphere_check_interval_hours=(
+            _parse_int("ATMOSPHERE_CHECK_INTERVAL_HOURS", 1) or 1
+        ),
         inactive_threshold_days=_parse_int("INACTIVE_THRESHOLD_DAYS", 14) or 14,
         inactive_check_weekday=os.getenv("INACTIVE_CHECK_WEEKDAY", "MON"),
         inactive_check_hour=_parse_int("INACTIVE_CHECK_HOUR", 10) or 10,

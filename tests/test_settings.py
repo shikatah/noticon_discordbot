@@ -20,6 +20,9 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.bot_timezone, "Asia/Tokyo")
         self.assertEqual(settings.topic_hour, 9)
         self.assertEqual(settings.topic_minute, 0)
+        self.assertEqual(settings.atmosphere_check_start_hour, 9)
+        self.assertEqual(settings.atmosphere_check_end_hour, 17)
+        self.assertEqual(settings.atmosphere_check_interval_hours, 1)
         self.assertEqual(settings.inactive_threshold_days, 14)
         self.assertTrue(settings.inactive_dm_dry_run)
 
@@ -35,6 +38,9 @@ class SettingsTest(unittest.TestCase):
                 "TOPIC_WEEKDAYS": "MON,WED",
                 "TOPIC_HOUR": "8",
                 "TOPIC_MINUTE": "30",
+                "ATMOSPHERE_CHECK_START_HOUR": "10",
+                "ATMOSPHERE_CHECK_END_HOUR": "16",
+                "ATMOSPHERE_CHECK_INTERVAL_HOURS": "2",
                 "INACTIVE_THRESHOLD_DAYS": "21",
                 "INACTIVE_CHECK_WEEKDAY": "FRI",
                 "INACTIVE_CHECK_HOUR": "11",
@@ -51,6 +57,9 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.topic_weekdays, "MON,WED")
         self.assertEqual(settings.topic_hour, 8)
         self.assertEqual(settings.topic_minute, 30)
+        self.assertEqual(settings.atmosphere_check_start_hour, 10)
+        self.assertEqual(settings.atmosphere_check_end_hour, 16)
+        self.assertEqual(settings.atmosphere_check_interval_hours, 2)
         self.assertEqual(settings.inactive_threshold_days, 21)
         self.assertEqual(settings.inactive_check_weekday, "FRI")
         self.assertEqual(settings.inactive_check_hour, 11)

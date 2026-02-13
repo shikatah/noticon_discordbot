@@ -22,6 +22,28 @@ def _weekday_token(value: str) -> str:
     return value.strip().upper()[:3]
 
 
+def _count_recent_channel_history_messages(
+    channel_history: list[dict[str, object]],
+    now_utc: datetime,
+    within_minutes: int = 60,
+) -> int:
+    threshold = now_utc - timedelta(minutes=within_minutes)
+    count = 0
+    for item in channel_history:
+        timestamp_text = item.get("timestamp")
+        if not isinstance(timestamp_text, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(timestamp_text)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts >= threshold:
+            count += 1
+    return count
+
+
 class SchedulerService:
     def __init__(self) -> None:
         self.bot: discord.Client | None = None
@@ -68,28 +90,21 @@ class SchedulerService:
         ):
             return
 
-        weekday_tokens = {
-            _weekday_token(token)
-            for token in self.bot.settings.topic_weekdays.split(",")
-            if token.strip()
-        }
-        weekday = _weekday_token(now_local.strftime("%a"))
-        if weekday not in weekday_tokens:
-            return
-        if now_local.hour != self.bot.settings.topic_hour:
-            return
-        if now_local.minute != self.bot.settings.topic_minute:
+        if not self._should_run_atmosphere_check(now_local):
             return
 
         channel_key = str(channel_id)
-        date_key = now_local.date().isoformat()
-        last_date = self.bot.runtime.setdefault("topic_last_posted_date_by_channel", {}).get(channel_key)
-        if last_date == date_key:
+        hour_key = self._hour_key(now_local)
+        last_hour_key = self.bot.runtime.setdefault("atmosphere_last_run_key_by_channel", {}).get(
+            channel_key
+        )
+        if last_hour_key == hour_key:
             return
-        if await self.bot.firestore.has_topic_for_channel_date(channel_key, date_key):
-            self.bot.runtime["topic_last_posted_date_by_channel"][channel_key] = date_key
+        if await self.bot.firestore.has_topic_for_channel_hour(channel_key, hour_key):
+            self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
             return
 
+        date_key = now_local.date().isoformat()
         daily_count = await self.bot.firestore.count_topics_for_date(date_key)
         if daily_count >= self.bot.settings.bot_daily_topic_limit:
             logger.info("Daily topic limit reached: %s", daily_count)
@@ -109,8 +124,31 @@ class SchedulerService:
         recent_topics_data = await self.bot.firestore.list_recent_topics(limit=10)
         recent_topics = [str(item.get("content", "")) for item in recent_topics_data]
         channel_history = self.bot.runtime.get("channel_history", {}).get(channel_key, [])
+        recent_activity = _count_recent_channel_history_messages(channel_history, now_utc, within_minutes=60)
         history_texts = [str(item.get("content", "")) for item in channel_history[-10:]]
         channel_summary = " / ".join(history_texts)[:500]
+
+        # If members are actively chatting in the last hour, observe only.
+        if recent_activity >= 8:
+            self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
+            await self.bot.firestore.save_bot_action(
+                action_id=f"atmosphere-observe-{uuid4().hex[:8]}",
+                payload={
+                    "type": "atmosphere_check",
+                    "channel_id": channel_key,
+                    "target_message_id": None,
+                    "content": "",
+                    "reasoning": "active_conversation_observe_only",
+                    "confidence": 1.0,
+                    "timestamp": now_utc,
+                    "model": "scheduler",
+                    "outcome": {
+                        "status": "observed_no_action",
+                        "action_ref": hour_key,
+                    },
+                },
+            )
+            return
 
         try:
             content, topic_type = await self.bot.topic_generator.generate_topic(
@@ -128,6 +166,8 @@ class SchedulerService:
                     "topic_type": topic_type,
                     "timestamp": now_utc,
                     "date_key": date_key,
+                    "hour_key": hour_key,
+                    "recent_activity_count": recent_activity,
                     "engagement": {
                         "reply_count": 0,
                         "reactions": {},
@@ -152,6 +192,7 @@ class SchedulerService:
                 },
             )
             self.bot.runtime["topic_last_posted_date_by_channel"][channel_key] = date_key
+            self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
             self.bot.runtime["last_action_at"] = now_utc
             logger.info("Scheduled topic posted to channel %s", channel_key)
         except Exception:
@@ -336,27 +377,15 @@ class SchedulerService:
         return (now_utc - last_outreach_at) < timedelta(days=30)
 
     def _next_topic_run(self, now_local: datetime) -> datetime:
-        weekdays = [
-            _weekday_token(token) for token in self.bot.settings.topic_weekdays.split(",") if token.strip()
-        ]
-        if not weekdays:
-            weekdays = ["MON", "TUE", "WED", "THU", "FRI"]
-        target_hour = self.bot.settings.topic_hour  # type: ignore[union-attr]
-        target_minute = self.bot.settings.topic_minute  # type: ignore[union-attr]
+        interval = max(1, int(self.bot.settings.atmosphere_check_interval_hours))  # type: ignore[union-attr]
+        candidate = now_local.replace(minute=0, second=0, microsecond=0)
+        if now_local.minute > 0 or now_local.second > 0 or now_local.microsecond > 0:
+            candidate = candidate + timedelta(hours=1)
 
-        for day_offset in range(0, 8):
-            candidate = (now_local + timedelta(days=day_offset)).replace(
-                hour=target_hour,
-                minute=target_minute,
-                second=0,
-                microsecond=0,
-            )
-            weekday = _weekday_token(candidate.strftime("%a"))
-            if weekday not in weekdays:
-                continue
-            if candidate <= now_local:
-                continue
-            return candidate
+        for _ in range(0, 24 * 8):
+            if self._should_run_atmosphere_check(candidate):
+                return candidate
+            candidate = candidate + timedelta(hours=interval)
         return (now_local + timedelta(days=1)).replace(second=0, microsecond=0)
 
     def _next_inactive_run(self, now_local: datetime) -> datetime:
@@ -376,3 +405,28 @@ class SchedulerService:
                 continue
             return candidate
         return (now_local + timedelta(days=1)).replace(second=0, microsecond=0)
+
+    def _should_run_atmosphere_check(self, now_local: datetime) -> bool:
+        weekdays = {
+            _weekday_token(token)
+            for token in self.bot.settings.topic_weekdays.split(",")  # type: ignore[union-attr]
+            if token.strip()
+        }
+        if not weekdays:
+            weekdays = {"MON", "TUE", "WED", "THU", "FRI"}
+        weekday = _weekday_token(now_local.strftime("%a"))
+        if weekday not in weekdays:
+            return False
+
+        start_hour = int(self.bot.settings.atmosphere_check_start_hour)  # type: ignore[union-attr]
+        end_hour = int(self.bot.settings.atmosphere_check_end_hour)  # type: ignore[union-attr]
+        interval = max(1, int(self.bot.settings.atmosphere_check_interval_hours))  # type: ignore[union-attr]
+
+        if not (start_hour <= now_local.hour <= end_hour):
+            return False
+        if now_local.minute != 0:
+            return False
+        return ((now_local.hour - start_hour) % interval) == 0
+
+    def _hour_key(self, now_local: datetime) -> str:
+        return now_local.strftime("%Y-%m-%d-%H")

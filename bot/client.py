@@ -62,6 +62,7 @@ class CommunityBot(commands.Bot):
             "member_stats": {},
             "bot_recent_actions": [],
             "topic_last_posted_date_by_channel": {},
+            "atmosphere_last_run_key_by_channel": {},
             "scheduler_last_tick": None,
             "scheduler_running": False,
             "scheduler_next_topic_at": None,

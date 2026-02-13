@@ -21,6 +21,9 @@ class SchedulerServiceTest(unittest.TestCase):
                 topic_weekdays="MON,TUE,WED,THU,FRI",
                 topic_hour=9,
                 topic_minute=0,
+                atmosphere_check_start_hour=9,
+                atmosphere_check_end_hour=17,
+                atmosphere_check_interval_hours=1,
                 inactive_check_weekday="MON",
                 inactive_check_hour=10,
             )
@@ -39,6 +42,9 @@ class SchedulerServiceTest(unittest.TestCase):
                 topic_weekdays="MON,TUE,WED,THU,FRI",
                 topic_hour=9,
                 topic_minute=0,
+                atmosphere_check_start_hour=9,
+                atmosphere_check_end_hour=17,
+                atmosphere_check_interval_hours=1,
                 inactive_check_weekday="MON",
                 inactive_check_hour=10,
             )

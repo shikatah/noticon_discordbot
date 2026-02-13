@@ -119,6 +119,15 @@ class FirestoreService:
             date_key,
         )
 
+    async def has_topic_for_channel_hour(self, channel_id: str, hour_key: str) -> bool:
+        if not self.enabled or self._client is None:
+            return False
+        return await asyncio.to_thread(
+            self._has_topic_for_channel_hour_sync,
+            channel_id,
+            hour_key,
+        )
+
     async def list_inactive_members(self, threshold_days: int) -> list[dict[str, object]]:
         if not self.enabled or self._client is None:
             return []
@@ -213,6 +222,14 @@ class FirestoreService:
 
     def _has_topic_for_channel_date_sync(self, channel_id: str, date_key: str) -> bool:
         docs = self._collection("bot_topics").where("date_key", "==", date_key).stream()
+        for doc in docs:
+            data = doc.to_dict() or {}
+            if str(data.get("channel_id", "")) == str(channel_id):
+                return True
+        return False
+
+    def _has_topic_for_channel_hour_sync(self, channel_id: str, hour_key: str) -> bool:
+        docs = self._collection("bot_topics").where("hour_key", "==", hour_key).stream()
         for doc in docs:
             data = doc.to_dict() or {}
             if str(data.get("channel_id", "")) == str(channel_id):
