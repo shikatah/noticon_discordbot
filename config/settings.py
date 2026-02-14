@@ -26,6 +26,22 @@ def _parse_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean (true/false).")
 
 
+def _parse_int_list(name: str) -> list[int]:
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return []
+    values: list[int] = []
+    for token in raw_value.split(","):
+        part = token.strip()
+        if not part:
+            continue
+        try:
+            values.append(int(part))
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a comma-separated list of integers.") from exc
+    return values
+
+
 @dataclass(slots=True)
 class Settings:
     discord_token: str
@@ -39,6 +55,7 @@ class Settings:
     bot_quiet_hours_end: int
     welcome_channel_id: int | None
     topic_channel_id: int | None
+    topic_channel_ids: list[int]
     bot_enabled_default: bool
     bot_timezone: str
     topic_weekdays: str
@@ -60,6 +77,13 @@ def get_settings() -> Settings:
     if not discord_token:
         raise ValueError("DISCORD_TOKEN is required.")
 
+    topic_channel_id = _parse_int("TOPIC_CHANNEL_ID")
+    topic_channel_ids = _parse_int_list("TOPIC_CHANNEL_IDS")
+    if not topic_channel_ids and topic_channel_id is not None:
+        topic_channel_ids = [topic_channel_id]
+    if topic_channel_ids and topic_channel_id is None:
+        topic_channel_id = topic_channel_ids[0]
+
     return Settings(
         discord_token=discord_token,
         discord_guild_id=_parse_int("DISCORD_GUILD_ID"),
@@ -73,7 +97,8 @@ def get_settings() -> Settings:
         bot_quiet_hours_start=_parse_int("BOT_QUIET_HOURS_START", 23) or 23,
         bot_quiet_hours_end=_parse_int("BOT_QUIET_HOURS_END", 7) or 7,
         welcome_channel_id=_parse_int("WELCOME_CHANNEL_ID"),
-        topic_channel_id=_parse_int("TOPIC_CHANNEL_ID"),
+        topic_channel_id=topic_channel_id,
+        topic_channel_ids=topic_channel_ids,
         bot_enabled_default=_parse_bool("BOT_ENABLED_DEFAULT", True),
         bot_timezone=os.getenv("BOT_TIMEZONE", "Asia/Tokyo"),
         topic_weekdays=os.getenv("TOPIC_WEEKDAYS", "MON,TUE,WED,THU,FRI"),

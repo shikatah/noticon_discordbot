@@ -79,10 +79,12 @@ class SchedulerService:
 
         if not self.bot.runtime.get("bot_enabled", True):
             return
-        channel_id = self.bot.settings.topic_channel_id
-        if channel_id is None:
+        channel_ids = self._topic_channel_ids()
+        if not channel_ids:
             if not self._warned_missing_topic_channel:
-                logger.warning("TOPIC_CHANNEL_ID is not set. Topic scheduler is skipped.")
+                logger.warning(
+                    "TOPIC_CHANNEL_ID(S) is not set. Topic scheduler is skipped."
+                )
                 self._warned_missing_topic_channel = True
             return
         if _is_quiet_hours(
@@ -93,127 +95,133 @@ class SchedulerService:
         if not self._should_run_atmosphere_check(now_local):
             return
 
-        channel_key = str(channel_id)
-        hour_key = self._hour_key(now_local)
-        last_hour_key = self.bot.runtime.setdefault("atmosphere_last_run_key_by_channel", {}).get(
-            channel_key
-        )
-        if last_hour_key == hour_key:
-            return
-        if await self.bot.firestore.has_topic_for_channel_hour(channel_key, hour_key):
-            self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
-            return
-
         date_key = now_local.date().isoformat()
+        hour_key = self._hour_key(now_local)
         daily_count = await self.bot.firestore.count_topics_for_date(date_key)
-        if daily_count >= self.bot.settings.bot_daily_topic_limit:
-            logger.info("Daily topic limit reached: %s", daily_count)
-            return
-
-        channel = self.bot.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-            except Exception:
-                logger.exception("Failed to resolve topic channel: %s", channel_id)
-                return
-        if not isinstance(channel, discord.TextChannel):
-            logger.warning("Configured topic channel is not a text channel: %s", channel_id)
-            return
-
         recent_topics_data = await self.bot.firestore.list_recent_topics(limit=10)
         recent_topics = [str(item.get("content", "")) for item in recent_topics_data]
-        channel_history = self.bot.runtime.get("channel_history", {}).get(channel_key, [])
-        recent_activity = _count_recent_channel_history_messages(channel_history, now_utc, within_minutes=60)
-        history_texts = [str(item.get("content", "")) for item in channel_history[-10:]]
-        channel_summary = " / ".join(history_texts)[:500]
+        for channel_id in channel_ids:
+            if daily_count >= self.bot.settings.bot_daily_topic_limit:
+                logger.info("Daily topic limit reached: %s", daily_count)
+                break
 
-        # If members are actively chatting in the last hour, observe only.
-        if recent_activity >= 8:
-            self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
-            await self.bot.firestore.save_bot_action(
-                action_id=f"atmosphere-observe-{uuid4().hex[:8]}",
-                payload={
-                    "type": "atmosphere_check",
-                    "channel_id": channel_key,
-                    "target_message_id": None,
-                    "content": "",
-                    "reasoning": "active_conversation_observe_only",
-                    "confidence": 1.0,
-                    "timestamp": now_utc,
-                    "model": "scheduler",
-                    "outcome": {
-                        "status": "observed_no_action",
-                        "action_ref": hour_key,
-                    },
-                },
-            )
-            return
+            channel_key = str(channel_id)
+            last_hour_key = self.bot.runtime.setdefault(
+                "atmosphere_last_run_key_by_channel", {}
+            ).get(channel_key)
+            if last_hour_key == hour_key:
+                continue
+            if await self.bot.firestore.has_topic_for_channel_hour(channel_key, hour_key):
+                self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
+                continue
 
-        try:
-            content, topic_type = await self.bot.topic_generator.generate_topic(
-                recent_topics=recent_topics,
-                channel_type="chat",
-                recent_channel_summary=channel_summary,
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except Exception:
+                    logger.exception("Failed to resolve topic channel: %s", channel_id)
+                    continue
+            if not isinstance(channel, discord.TextChannel):
+                logger.warning("Configured topic channel is not a text channel: %s", channel_id)
+                continue
+
+            channel_history = self.bot.runtime.get("channel_history", {}).get(channel_key, [])
+            recent_activity = _count_recent_channel_history_messages(
+                channel_history,
+                now_utc,
+                within_minutes=60,
             )
-            sent = await channel.send(content)
-            topic_id = str(sent.id)
-            await self.bot.firestore.save_topic_post(
-                topic_id=topic_id,
-                payload={
-                    "channel_id": channel_key,
-                    "content": content,
-                    "topic_type": topic_type,
-                    "timestamp": now_utc,
-                    "date_key": date_key,
-                    "hour_key": hour_key,
-                    "recent_activity_count": recent_activity,
-                    "engagement": {
-                        "reply_count": 0,
-                        "reactions": {},
+            history_texts = [str(item.get("content", "")) for item in channel_history[-10:]]
+            channel_summary = " / ".join(history_texts)[:500]
+
+            # If members are actively chatting in the last hour, observe only.
+            if recent_activity >= 8:
+                self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
+                await self.bot.firestore.save_bot_action(
+                    action_id=f"atmosphere-observe-{uuid4().hex[:8]}",
+                    payload={
+                        "type": "atmosphere_check",
+                        "channel_id": channel_key,
+                        "target_message_id": None,
+                        "content": "",
+                        "reasoning": "active_conversation_observe_only",
+                        "confidence": 1.0,
+                        "timestamp": now_utc,
+                        "model": "scheduler",
+                        "outcome": {
+                            "status": "observed_no_action",
+                            "action_ref": hour_key,
+                        },
                     },
-                },
-            )
-            await self.bot.firestore.save_bot_action(
-                action_id=f"{topic_id}-{uuid4().hex[:8]}",
-                payload={
-                    "type": "topic_post",
-                    "channel_id": channel_key,
-                    "target_message_id": topic_id,
-                    "content": content,
-                    "reasoning": "scheduled_topic_post",
-                    "confidence": 1.0,
-                    "timestamp": now_utc,
-                    "model": "scheduler",
-                    "outcome": {
-                        "status": "posted",
-                        "action_ref": topic_id,
+                )
+                continue
+
+            try:
+                content, topic_type = await self.bot.topic_generator.generate_topic(
+                    recent_topics=recent_topics,
+                    channel_type="chat",
+                    recent_channel_summary=channel_summary,
+                )
+                sent = await channel.send(content)
+                topic_id = str(sent.id)
+                await self.bot.firestore.save_topic_post(
+                    topic_id=topic_id,
+                    payload={
+                        "channel_id": channel_key,
+                        "content": content,
+                        "topic_type": topic_type,
+                        "timestamp": now_utc,
+                        "date_key": date_key,
+                        "hour_key": hour_key,
+                        "recent_activity_count": recent_activity,
+                        "engagement": {
+                            "reply_count": 0,
+                            "reactions": {},
+                        },
                     },
-                },
-            )
-            self.bot.runtime["topic_last_posted_date_by_channel"][channel_key] = date_key
-            self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
-            self.bot.runtime["last_action_at"] = now_utc
-            logger.info("Scheduled topic posted to channel %s", channel_key)
-        except Exception:
-            logger.exception("Scheduled topic post failed.")
-            await self.bot.firestore.save_bot_action(
-                action_id=f"topic-failed-{uuid4().hex[:8]}",
-                payload={
-                    "type": "topic_post",
-                    "channel_id": channel_key,
-                    "target_message_id": None,
-                    "content": "",
-                    "reasoning": "topic_post_failed",
-                    "confidence": 0.0,
-                    "timestamp": now_utc,
-                    "model": "scheduler",
-                    "outcome": {
-                        "status": "failed",
-                        "action_ref": None,
+                )
+                await self.bot.firestore.save_bot_action(
+                    action_id=f"{topic_id}-{uuid4().hex[:8]}",
+                    payload={
+                        "type": "topic_post",
+                        "channel_id": channel_key,
+                        "target_message_id": topic_id,
+                        "content": content,
+                        "reasoning": "scheduled_topic_post",
+                        "confidence": 1.0,
+                        "timestamp": now_utc,
+                        "model": "scheduler",
+                        "outcome": {
+                            "status": "posted",
+                            "action_ref": topic_id,
+                        },
                     },
-                },
-            )
+                )
+                self.bot.runtime["topic_last_posted_date_by_channel"][channel_key] = date_key
+                self.bot.runtime["atmosphere_last_run_key_by_channel"][channel_key] = hour_key
+                self.bot.runtime["last_action_at"] = now_utc
+                daily_count += 1
+                logger.info("Scheduled topic posted to channel %s", channel_key)
+            except Exception:
+                logger.exception("Scheduled topic post failed.")
+                await self.bot.firestore.save_bot_action(
+                    action_id=f"topic-failed-{uuid4().hex[:8]}",
+                    payload={
+                        "type": "topic_post",
+                        "channel_id": channel_key,
+                        "target_message_id": None,
+                        "content": "",
+                        "reasoning": "topic_post_failed",
+                        "confidence": 0.0,
+                        "timestamp": now_utc,
+                        "model": "scheduler",
+                        "outcome": {
+                            "status": "failed",
+                            "action_ref": None,
+                        },
+                    },
+                )
 
     @topic_tick_loop.before_loop
     async def _wait_until_ready_for_topic(self) -> None:
@@ -430,3 +438,20 @@ class SchedulerService:
 
     def _hour_key(self, now_local: datetime) -> str:
         return now_local.strftime("%Y-%m-%d-%H")
+
+    def _topic_channel_ids(self) -> list[int]:
+        raw_ids = list(getattr(self.bot.settings, "topic_channel_ids", []))  # type: ignore[union-attr]
+        if not raw_ids:
+            fallback_id = getattr(self.bot.settings, "topic_channel_id", None)  # type: ignore[union-attr]
+            if isinstance(fallback_id, int):
+                raw_ids = [fallback_id]
+        deduped: list[int] = []
+        seen: set[int] = set()
+        for channel_id in raw_ids:
+            if not isinstance(channel_id, int):
+                continue
+            if channel_id in seen:
+                continue
+            seen.add(channel_id)
+            deduped.append(channel_id)
+        return deduped

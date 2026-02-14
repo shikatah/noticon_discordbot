@@ -61,7 +61,8 @@ Discord community bot for the Notion learning community "Nochicon".
 - If `GEMINI_API_KEY` is missing, primary judgment runs with safe fallback rules.
 - If `ANTHROPIC_API_KEY` is missing, secondary judgment falls back to `silent`.
 - Set `DISCORD_GUILD_ID` during development so slash commands sync quickly.
-- `WELCOME_CHANNEL_ID` and `TOPIC_CHANNEL_ID` are required to enable Phase 5 welcome/topic features.
+- `WELCOME_CHANNEL_ID` is required for welcome posting.
+- Topic posting supports `TOPIC_CHANNEL_IDS` (comma-separated). If unset, `TOPIC_CHANNEL_ID` is used.
 - Atmosphere checks run hourly on weekdays by default (09:00-17:00 JST).
 - Inactive outreach starts as dry-run by default (`INACTIVE_DM_DRY_RUN=true`).
 - `/bot-pause` disables active bot actions until `/bot-resume` is executed.
